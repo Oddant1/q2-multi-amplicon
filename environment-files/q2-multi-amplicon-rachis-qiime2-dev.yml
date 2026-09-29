@@ -1,0 +1,24 @@
+channels:
+- https://packages.qiime2.org/qiime2/latest/qiime2/passed
+- conda-forge
+- bioconda
+dependencies:
+  - rachis-qiime2
+  # Note 1: Add any additional conda dependencies here.
+  # Required by multi-amplicon-analysis and classify-reads.
+  - bowtie2
+  - q2-cutadapt
+  - q2-vsearch
+  # multi-amplicon-analysis also calls q2-real-allele, which is not yet
+  # published, so it has to be installed from source into this environment.
+  - pip
+  - pip:
+  # Note 2: Add any additional pip dependencies here.
+  #   - # some pip dependency
+  # Note 3: If you host your repository on GitHub, and you uncomment and modify
+  # the following lines to replace:
+  # REPO-OWNER with the user or organization name that owns the repository
+  # DEFAULT-BRANCH with the default branch of the repository (typically 'main')
+  # Your installation commands can be updated to install
+  # from this file without additional steps.
+  #   - q2-multi-amplicon@git+https://github.com/REPO-OWNER/q2-multi-amplicon.git@DEFAULT-BRANCH

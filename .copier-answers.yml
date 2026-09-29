@@ -1,0 +1,18 @@
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# Changes here will be overwritten by Copier
+# NEVER EDIT MANUALLY
+# INSTEAD: run a recopy or update command
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+_commit: 317d2fb
+_src_path: https://github.com/caporaso-lab/plugin-template
+author_email: oddant1@hotmail.com
+author_name: Oddant1
+license: BSD-3-Clause
+module_name: q2_multi_amplicon
+package_name: q2-multi-amplicon
+plugin_description: A QIIME 2 plugin for working with multiple amplicon regions/datasets.
+plugin_name: multi-amplicon
+plugin_short_description: Multi-amplicon workflows.
+project_url: https://example.com/q2-multi-amplicon
+target_distro: qiime2
