@@ -8,6 +8,7 @@
 
 import collections
 import hashlib
+import itertools
 import shutil
 import subprocess
 import tempfile
@@ -54,25 +55,40 @@ def classify_reads(
     index_base = str(database.path / database.get_basename())
     preset = _bowtie2_preset(mode, sensitivity)
 
-    alignments = SAMDirFmt()
+    classifications = {}
     for sample_id, forward, _ in sequences.manifest.itertuples():
-        # --no-unal keeps reads that could not be assigned to any reference
-        # out of the output entirely.
-        _run_command([
-            'bowtie2', '-p', str(n_threads), preset, '--no-unal',
-            '-x', index_base, '-U', str(forward),
-            '-S', str(alignments.sams.path_maker(sample_id=sample_id))])
+        with tempfile.TemporaryDirectory(
+                prefix='q2-multi-amplicon-') as tmpdir:
+            unsorted_sam = str(Path(tmpdir) / 'unsorted.sam')
+            sorted_sam = str(Path(tmpdir) / 'sorted.sam')
 
-    return alignments
+            # --no-unal keeps reads that could not be assigned to any
+            # reference out of the output entirely.
+            _run_command([
+                'bowtie2', '-p', str(n_threads), preset, '--no-unal',
+                '-x', index_base, '-U', str(forward), '-S', unsorted_sam])
+
+            # Sorting brings each reference's records together, so that they
+            # can be split into one file per reference while holding only
+            # one of those files open at a time.
+            _run_command([
+                'samtools', 'sort', '-O', 'sam', '-T',
+                str(Path(tmpdir) / 'sort'), '-o', sorted_sam, unsorted_sam])
+
+            # A sample none of whose reads were assigned is still included,
+            # with no files, so that it is accounted for downstream.
+            classifications[sample_id] = _split_by_reference(sorted_sam)
+
+    return classifications
 
 
 def count_classifications(classifications: SAMDirFmt) -> biom.Table:
     counts = {}
-    for path, sam in sorted(classifications.sams.iter_views(SAMFormat)):
+    for sample_id, alignments in sorted(classifications.items()):
         # A sample none of whose reads were assigned still gets a column, so
         # that every sample that was classified is accounted for.
-        counts[path.stem] = collections.Counter(
-            fields[2] for fields in _iter_primary_records(str(sam)))
+        counts[sample_id] = collections.Counter(
+            fields[2] for fields in _iter_sample_records(alignments))
 
     table = pd.DataFrame(counts).fillna(0).astype(int).sort_index()
     return biom.Table(table.values, list(table.index), list(table.columns))
@@ -84,15 +100,15 @@ def dereplicate_classifications(
     # reference -> read sequence -> sample -> number of reads
     counts = collections.defaultdict(
         lambda: collections.defaultdict(collections.Counter))
-    for path, sam in sorted(classifications.sams.iter_views(SAMFormat)):
-        sample_ids.append(path.stem)
-        for fields in _iter_primary_records(str(sam)):
+    for sample_id, alignments in sorted(classifications.items()):
+        sample_ids.append(sample_id)
+        for fields in _iter_sample_records(alignments):
             # SAM stores a read that aligned to the reverse strand as its
             # reverse complement, so every sequence here is already in the
             # orientation of its reference, whichever strand it came from.
             reference, sequence = fields[2], fields[9]
             if sequence != _UNAVAILABLE:
-                counts[reference][sequence][path.stem] += 1
+                counts[reference][sequence][sample_id] += 1
 
     tables, sequences = {}, {}
     for reference, by_sequence in sorted(counts.items()):
@@ -174,6 +190,58 @@ def _bowtie2_preset(mode, sensitivity):
     if mode == 'local':
         return '--%s-%s' % (sensitivity, mode)
     return '--%s' % sensitivity
+
+
+def _split_by_reference(sam_path):
+    before, sq_lines, after = _read_header(sam_path)
+
+    alignments = SAMDirFmt()
+    with open(sam_path) as fh:
+        records = (line for line in fh if not line.startswith('@'))
+        # The records are sorted, so each reference's records are
+        # contiguous and each reference's file is written in one go.
+        for reference, lines in itertools.groupby(records, key=_rname):
+            path = alignments.sams.path_maker(reference=reference)
+            with open(path, 'w') as out_fh:
+                # Only the reference's own @SQ line is kept, so that the file
+                # describes only the reference whose alignments it holds.
+                out_fh.writelines(before + [sq_lines[reference]] + after)
+                out_fh.writelines(lines)
+
+    return alignments
+
+
+def _read_header(sam_path):
+    """Split a SAM header into its @SQ lines, keyed by reference, and the
+    header lines before and after them."""
+    before, sq_lines, after = [], {}, []
+    with open(sam_path) as fh:
+        for line in fh:
+            if not line.startswith('@'):
+                break
+            if line.startswith('@SQ\t'):
+                sq_lines[_sq_name(line)] = line
+            elif sq_lines:
+                after.append(line)
+            else:
+                before.append(line)
+    return before, sq_lines, after
+
+
+def _sq_name(line):
+    for field in line.rstrip('\n').split('\t')[1:]:
+        if field.startswith('SN:'):
+            return field[3:]
+    raise ValueError('SAM @SQ header line has no SN field: %r' % line)
+
+
+def _rname(line):
+    return line.split('\t', 3)[2]
+
+
+def _iter_sample_records(alignments):
+    for _, sam in sorted(alignments.sams.iter_views(SAMFormat)):
+        yield from _iter_primary_records(str(sam))
 
 
 def _run_command(cmd, stdout=None):

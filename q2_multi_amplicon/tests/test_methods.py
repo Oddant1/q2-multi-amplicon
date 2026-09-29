@@ -25,16 +25,32 @@ from q2_multi_amplicon._methods import (
 from q2_multi_amplicon._types_and_formats import SAMDirFmt
 
 
-def _references_per_sample(alignments):
+def _rnames(path):
+    """The reference that each record of a SAM file is aligned to."""
+    return [line.split('\t')[2] for line in path.read_text().splitlines()
+            if not line.startswith('@')]
+
+
+def _references_per_sample(classifications):
     """Map each sample to a count of the references its reads aligned to."""
     observed = {}
-    for path in sorted(alignments.path.glob('*.sam')):
+    for sample_id, alignments in classifications.items():
         counts = collections.Counter()
-        for line in path.read_text().splitlines():
-            if not line.startswith('@'):
-                counts[line.split('\t')[2]] += 1
-        observed[path.stem] = dict(counts)
+        for path in alignments.path.glob('*.sam'):
+            counts.update(_rnames(path))
+        observed[sample_id] = dict(counts)
     return observed
+
+
+def _fake_run(observed_cmds, sam=''):
+    """Stand in for subprocess.run, recording each command and writing `sam`
+    wherever bowtie2 or samtools would have written their output."""
+    def fake_run(cmd, **kwargs):
+        observed_cmds.append(cmd)
+        output_flag = '-S' if cmd[0] == 'bowtie2' else '-o'
+        Path(cmd[cmd.index(output_flag) + 1]).write_text(sam)
+        return mock.DEFAULT
+    return fake_run
 
 
 class ClassifyReadsTests(TestPluginBase):
@@ -49,13 +65,31 @@ class ClassifyReadsTests(TestPluginBase):
             self.get_data_path('reference-index.qza')
         ).view(Bowtie2IndexDirFmt)
 
-    def test_one_sam_per_sample(self):
+    def test_one_result_per_sample(self):
         observed = classify_reads(self.sequences, self.database)
 
-        self.assertIsInstance(observed, SAMDirFmt)
+        self.assertEqual(list(observed), ['sample1', 'sample2', 'sample3'])
+        for alignments in observed.values():
+            self.assertIsInstance(alignments, SAMDirFmt)
+
+    def test_one_sam_per_reference(self):
+        observed = classify_reads(self.sequences, self.database)
+
         self.assertEqual(
-            sorted(p.name for p in observed.path.glob('*.sam')),
-            ['sample1.sam', 'sample2.sam', 'sample3.sam'])
+            {sample_id: sorted(p.name for p in alignments.path.glob('*.sam'))
+             for sample_id, alignments in observed.items()},
+            {'sample1': ['ref1.sam'],
+             'sample2': ['ref1.sam', 'ref2.sam'],
+             'sample3': ['ref2.sam']})
+
+    def test_each_sam_holds_only_its_reference(self):
+        observed = classify_reads(self.sequences, self.database)
+
+        for sample_id, alignments in observed.items():
+            alignments.validate(level='max')
+            for path in alignments.path.glob('*.sam'):
+                with self.subTest(sample_id=sample_id, file=path.name):
+                    self.assertEqual(set(_rnames(path)), {path.stem})
 
     def test_assigns_reads_to_expected_references(self):
         # The fixtures were built so that sample1 contains only ref1 reads,
@@ -68,11 +102,15 @@ class ClassifyReadsTests(TestPluginBase):
             'sample3': {'ref2': 10},
         })
 
-    def test_writes_sam_headers(self):
+    def test_headers_describe_only_their_reference(self):
         observed = classify_reads(self.sequences, self.database)
 
-        header = (observed.path / 'sample1.sam').read_text().splitlines()[0]
-        self.assertTrue(header.startswith('@'))
+        lines = (observed['sample2'].path / 'ref1.sam').read_text()
+        header = [line for line in lines.splitlines() if line.startswith('@')]
+        # The @PG lines are bowtie2's and samtools sort's.
+        self.assertEqual([line.split('\t')[0] for line in header],
+                         ['@HD', '@SQ', '@PG', '@PG'])
+        self.assertEqual(header[1], '@SQ\tSN:ref1\tLN:200')
 
     def test_global_mode(self):
         # bowtie2's end-to-end presets tolerate the untrimmed primer on these
@@ -88,40 +126,52 @@ class ClassifyReadsTests(TestPluginBase):
     def test_builds_expected_command(self):
         observed_cmds = []
 
-        def fake_run(cmd, **kwargs):
-            observed_cmds.append(cmd)
-            # -S is the last argument; bowtie2 would create that file, so
-            # create it here too.
-            open(cmd[-1], 'w').close()
-            return mock.DEFAULT
-
         with mock.patch('q2_multi_amplicon._methods.subprocess.run',
-                        side_effect=fake_run):
+                        side_effect=_fake_run(observed_cmds)):
             classify_reads(self.sequences, self.database, n_threads=3,
                            mode='local', sensitivity='very-sensitive')
 
-        self.assertEqual(len(observed_cmds), 3)
-        for cmd in observed_cmds:
-            self.assertEqual(cmd[0], 'bowtie2')
-            self.assertIn('--very-sensitive-local', cmd)
-            self.assertIn('--no-unal', cmd)
-            self.assertEqual(cmd[cmd.index('-p') + 1], '3')
-            self.assertTrue(cmd[cmd.index('-U') + 1].endswith('.fastq.gz'))
+        # Each sample is aligned, and then its alignments are sorted.
+        bowtie2_cmds, sort_cmds = observed_cmds[0::2], observed_cmds[1::2]
+        self.assertEqual(len(bowtie2_cmds), 3)
+        self.assertEqual(len(sort_cmds), 3)
+        for bowtie2_cmd, sort_cmd in zip(bowtie2_cmds, sort_cmds):
+            self.assertEqual(bowtie2_cmd[0], 'bowtie2')
+            self.assertIn('--very-sensitive-local', bowtie2_cmd)
+            self.assertIn('--no-unal', bowtie2_cmd)
+            self.assertEqual(bowtie2_cmd[bowtie2_cmd.index('-p') + 1], '3')
+
+            self.assertEqual(sort_cmd[:2], ['samtools', 'sort'])
+            self.assertEqual(sort_cmd[-1],
+                             bowtie2_cmd[bowtie2_cmd.index('-S') + 1])
 
         self.assertEqual(
-            sorted(cmd[-1].rsplit('/', 1)[-1] for cmd in observed_cmds),
-            ['sample1.sam', 'sample2.sam', 'sample3.sam'])
+            [Path(cmd[cmd.index('-U') + 1]).name.split('_')[0]
+             for cmd in bowtie2_cmds],
+            ['sample1', 'sample2', 'sample3'])
 
     def test_global_mode_command(self):
-        def fake_run(cmd, **kwargs):
-            self.assertIn('--sensitive', cmd)
-            self.assertNotIn('--sensitive-global', cmd)
-            open(cmd[-1], 'w').close()
-            return mock.DEFAULT
+        observed_cmds = []
 
         with mock.patch('q2_multi_amplicon._methods.subprocess.run',
-                        side_effect=fake_run):
+                        side_effect=_fake_run(observed_cmds)):
             classify_reads(self.sequences, self.database, mode='global')
+
+        for cmd in observed_cmds[0::2]:
+            self.assertIn('--sensitive', cmd)
+            self.assertNotIn('--sensitive-global', cmd)
+
+    def test_sample_without_alignments_has_no_files(self):
+        # bowtie2 writes a header-only SAM for a sample none of whose reads
+        # aligned, which happens routinely under --no-unal.
+        with mock.patch('q2_multi_amplicon._methods.subprocess.run',
+                        side_effect=_fake_run([], sam=SAM_HEADER)):
+            observed = classify_reads(self.sequences, self.database)
+
+        self.assertEqual(
+            {sample_id: list(alignments.path.iterdir())
+             for sample_id, alignments in observed.items()},
+            {'sample1': [], 'sample2': [], 'sample3': []})
 
     def test_bowtie2_failure_is_reported(self):
         error = subprocess.CalledProcessError(
@@ -149,13 +199,23 @@ def _sam_record(qname, flag, reference, sequence='ACGTA'):
 class SAMInputTestBase(TestPluginBase):
     package = 'q2_multi_amplicon.tests'
 
-    def _sam_dir(self, sams):
-        root = Path(self.temp_dir.name) / 'alignments'
-        root.mkdir()
-        for sample_id, records in sams.items():
-            (root / ('%s.sam' % sample_id)).write_text(
-                SAM_HEADER + ''.join(records))
-        return SAMDirFmt(str(root), mode='r')
+    def _classifications(self, samples):
+        """Lay out each sample's records as classify_reads does, with the
+        records of each reference in a SAM file of their own."""
+        classifications = {}
+        for sample_id, records in samples.items():
+            root = Path(self.temp_dir.name) / sample_id
+            root.mkdir()
+
+            by_reference = collections.defaultdict(list)
+            for record in records:
+                by_reference[record.split('\t')[2]].append(record)
+            for reference, reference_records in by_reference.items():
+                (root / ('%s.sam' % reference)).write_text(
+                    SAM_HEADER + ''.join(reference_records))
+
+            classifications[sample_id] = SAMDirFmt(str(root), mode='r')
+        return classifications
 
     def _classify_fixtures(self):
         sequences = qiime2.Artifact.load(
@@ -180,11 +240,11 @@ class CountClassificationsTests(SAMInputTestBase):
             index=['ref1', 'ref2']))
 
     def test_counts_only_primary_alignments(self):
-        observed = self._count(self._sam_dir({
+        observed = self._count(self._classifications({
             'sample1': [
                 _sam_record('read1', 0, 'ref1'),
                 _sam_record('read2', 16, 'ref1'),
-                _sam_record('unmapped', 4, '*'),
+                _sam_record('unmapped', 4, 'ref1'),
                 _sam_record('read1', 256, 'ref2'),
                 _sam_record('read2', 2048, 'ref2'),
             ],
@@ -194,7 +254,7 @@ class CountClassificationsTests(SAMInputTestBase):
             observed, pd.DataFrame({'sample1': [2]}, index=['ref1']))
 
     def test_sample_without_assignments_is_kept(self):
-        observed = self._count(self._sam_dir({
+        observed = self._count(self._classifications({
             'sample1': [_sam_record('read1', 0, 'ref1')],
             'sample2': [],
         }))
@@ -203,9 +263,9 @@ class CountClassificationsTests(SAMInputTestBase):
             {'sample1': [1], 'sample2': [0]}, index=['ref1']))
 
     def test_no_assignments_in_any_sample(self):
-        observed = count_classifications(self._sam_dir({
+        observed = count_classifications(self._classifications({
             'sample1': [],
-            'sample2': [_sam_record('unmapped', 4, '*')],
+            'sample2': [_sam_record('unmapped', 4, 'ref1')],
         }))
 
         self.assertEqual(list(observed.ids()), ['sample1', 'sample2'])
@@ -245,7 +305,7 @@ class DereplicateClassificationsTests(SAMInputTestBase):
             self.assertEqual(len(sequences[feature_id]), 140)
 
     def test_distinct_sequences_are_separate_features(self):
-        observed = self._dereplicate(self._sam_dir({
+        observed = self._dereplicate(self._classifications({
             'sample1': [
                 _sam_record('read1', 0, 'ref1', 'AAAAA'),
                 _sam_record('read2', 0, 'ref1', 'CCCCC'),
@@ -272,7 +332,7 @@ class DereplicateClassificationsTests(SAMInputTestBase):
     def test_reverse_strand_reads_collapse_with_forward_reads(self):
         # SAM already stores a reverse-strand read as its reverse
         # complement, so both records here are the same sequence.
-        observed = self._dereplicate(self._sam_dir({
+        observed = self._dereplicate(self._classifications({
             'sample1': [_sam_record('read1', 0, 'ref1', 'ACGTT'),
                         _sam_record('read2', 16, 'ref1', 'ACGTT')],
         }))
@@ -282,7 +342,7 @@ class DereplicateClassificationsTests(SAMInputTestBase):
         self.assertEqual(table.values.tolist(), [[2]])
 
     def test_one_table_per_reference_with_every_sample(self):
-        observed = self._dereplicate(self._sam_dir({
+        observed = self._dereplicate(self._classifications({
             'sample1': [_sam_record('read1', 0, 'ref1', 'AAAAA')],
             'sample2': [_sam_record('read2', 0, 'ref2', 'CCCCC')],
         }))
@@ -294,10 +354,10 @@ class DereplicateClassificationsTests(SAMInputTestBase):
             self.assertEqual(list(table.columns), ['sample1', 'sample2'])
 
     def test_uses_only_primary_alignments(self):
-        observed = self._dereplicate(self._sam_dir({
+        observed = self._dereplicate(self._classifications({
             'sample1': [
                 _sam_record('read1', 0, 'ref1', 'AAAAA'),
-                _sam_record('unmapped', 4, '*', 'CCCCC'),
+                _sam_record('unmapped', 4, 'ref1', 'CCCCC'),
                 _sam_record('read1', 256, 'ref2', 'AAAAA'),
                 _sam_record('read1', 2048, 'ref1', 'GGGGG'),
             ],
@@ -307,9 +367,9 @@ class DereplicateClassificationsTests(SAMInputTestBase):
         self.assertEqual(list(observed['ref1'][1]), ['AAAAA'])
 
     def test_no_assignments_in_any_sample(self):
-        tables, sequences = dereplicate_classifications(self._sam_dir({
+        tables, sequences = dereplicate_classifications(self._classifications({
             'sample1': [],
-            'sample2': [_sam_record('unmapped', 4, '*')],
+            'sample2': [_sam_record('unmapped', 4, 'ref1')],
         }))
 
         self.assertEqual((tables, sequences), ({}, {}))

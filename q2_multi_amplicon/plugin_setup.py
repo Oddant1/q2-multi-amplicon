@@ -56,6 +56,11 @@ _classify_reads_parameters = {
         ['very-fast', 'fast', 'sensitive', 'very-sensitive']),
 }
 
+_classifications_description = (
+    'The alignments of each sample, keyed by sample ID. Each sample\'s '
+    'artifact holds one SAM file per reference sequence that its reads were '
+    'assigned to, named after that reference.')
+
 _classify_reads_parameter_descriptions = {
     'n_threads': 'Number of alignment threads to launch.',
     'mode': 'Bowtie2 alignment settings. See the bowtie2 manual for more '
@@ -72,7 +77,7 @@ plugin.methods.register_function(
         'database': Bowtie2Index,
     },
     parameters=_classify_reads_parameters,
-    outputs=[('classifications', SampleData[SAMOutput])],
+    outputs=[('classifications', Collection[SampleData[SAMOutput]])],
     input_descriptions={
         'sequences': 'The single-end (or merged) sequences to classify.',
         'database': 'Bowtie2 index of the reference sequences that reads '
@@ -80,23 +85,25 @@ plugin.methods.register_function(
     },
     parameter_descriptions=_classify_reads_parameter_descriptions,
     output_descriptions={
-        'classifications': 'One SAM file per sample, recording the reference '
-                           'sequence each read was assigned to.',
+        'classifications': _classifications_description,
     },
     name='Classify reads against a Bowtie2 index',
     description=(
         'Align each sample\'s reads to a Bowtie2 index with bowtie2, and '
-        'return the resulting alignments as one SAM file per sample. Reads '
-        'that did not align to any reference are left out of the output. '
-        'The alignments can be viewed as SampleData[Sequences] or '
-        'SampleData[SequencesWithQuality] to recover the classified reads '
-        'themselves.'),
+        'return the resulting alignments as a collection with one artifact '
+        'per sample, in which the alignments to each reference sequence are '
+        'a separate SAM file. Reads that did not align to any reference are '
+        'left out of the output, and a sample none of whose reads aligned '
+        'has no SAM files. Each sample\'s alignments can be viewed as '
+        'SampleData[Sequences] or SampleData[SequencesWithQuality], with '
+        'one entry per reference sequence, to recover the reads assigned to '
+        'each reference.'),
     citations=[citations['langmead2012fast']]
 )
 
 plugin.methods.register_function(
     function=count_classifications,
-    inputs={'classifications': SampleData[SAMOutput]},
+    inputs={'classifications': Collection[SampleData[SAMOutput]]},
     parameters={},
     outputs=[('table', FeatureTable[Frequency])],
     input_descriptions={
@@ -132,7 +139,7 @@ _dereplicated_output_descriptions = {
 
 plugin.methods.register_function(
     function=dereplicate_classifications,
-    inputs={'classifications': SampleData[SAMOutput]},
+    inputs={'classifications': Collection[SampleData[SAMOutput]]},
     parameters={},
     outputs=[
         ('dereplicated_tables', Collection[FeatureTable[Frequency]]),
@@ -320,7 +327,7 @@ plugin.pipelines.register_function(
     parameters=_multi_amplicon_analysis_parameters,
     outputs=[
         ('classified_sequences', _output_seqs),
-        ('classifications', SampleData[SAMOutput]),
+        ('classifications', Collection[SampleData[SAMOutput]]),
         ('table', FeatureTable[Frequency]),
         ('dereplicated_tables', Collection[FeatureTable[Frequency]]),
         ('dereplicated_sequences', Collection[FeatureData[Sequence]]),
@@ -350,8 +357,7 @@ plugin.pipelines.register_function(
     output_descriptions={
         'classified_sequences': 'The trimmed reads (merged, if the input was '
                                 'paired-end) that were classified.',
-        'classifications': 'One SAM file per sample, recording the reference '
-                           'sequence each read was assigned to.',
+        'classifications': _classifications_description,
         'table': 'The number of reads in each sample that were assigned to '
                  'each reference sequence.',
         **_dereplicated_output_descriptions,

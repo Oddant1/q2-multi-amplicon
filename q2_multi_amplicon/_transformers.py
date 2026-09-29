@@ -25,24 +25,27 @@ _HAS_SEQUENCE = 'length(seq) > 0'
 _MISSING_QUALITY = '%s && min(qual) == 255' % _HAS_SEQUENCE
 
 
+# A SAMDirFmt holds the alignments of a single sample, one file per
+# reference, so each reference's reads become one entry of the per-sample
+# sequence formats, identified by the reference's ID.
 @plugin.register_transformer
 def _1(dirfmt: SAMDirFmt) -> SingleLanePerSampleSingleEndFastqDirFmt:
     result = SingleLanePerSampleSingleEndFastqDirFmt()
     manifest_data = []
 
-    for index, (sample_id, sam) in enumerate(_iter_samples(dirfmt)):
+    for index, (reference, sam) in enumerate(_iter_references(dirfmt)):
         # samtools would otherwise fill in a default quality score for these
         # reads, rather than refusing to write them.
         missing = int(_samtools_view(sam, _MISSING_QUALITY, '-c').stdout)
         if missing:
             raise ValueError(
-                '%d read(s) in sample %r have no quality scores, so they '
+                '%d read(s) aligned to %r have no quality scores, so they '
                 'cannot be represented as SampleData[SequencesWithQuality]. '
                 'View this data as SampleData[Sequences] instead.'
-                % (missing, sample_id))
+                % (missing, reference))
 
         output_fp = result.sequences.path_maker(
-            sample_id=sample_id,
+            sample_id=reference,
             # These are not used internally by QIIME 2, so their values
             # don't matter beyond keeping the filenames unique.
             barcode_id=index, lane_number=1, read_number=1)
@@ -51,7 +54,7 @@ def _1(dirfmt: SAMDirFmt) -> SingleLanePerSampleSingleEndFastqDirFmt:
         _samtools_view(sam, _HAS_SEQUENCE,
                        '--output-fmt', 'fastq', '-o', str(output_fp))
 
-        manifest_data.append([sample_id, output_fp.name, 'forward'])
+        manifest_data.append([reference, output_fp.name, 'forward'])
 
     manifest = FastqManifestFormat()
     pd.DataFrame(
@@ -71,7 +74,7 @@ def _2(dirfmt: SAMDirFmt) -> QIIME1DemuxDirFmt:
     result = QIIME1DemuxDirFmt()
 
     with open(str(result.path / 'seqs.fna'), 'w') as fh:
-        for sample_id, sam in _iter_samples(dirfmt):
+        for reference, sam in _iter_references(dirfmt):
             fasta = _samtools_view(
                 sam, _HAS_SEQUENCE, '--output-fmt', 'fasta').stdout
 
@@ -80,12 +83,12 @@ def _2(dirfmt: SAMDirFmt) -> QIIME1DemuxDirFmt:
             # '<sample-id>_<seq-id>', where seq-id is unique within the
             # sample, so the read name samtools writes is replaced.
             for seq_id, sequence in enumerate(fasta.splitlines()[1::2]):
-                fh.write('>%s_%d\n%s\n' % (sample_id, seq_id, sequence))
+                fh.write('>%s_%d\n%s\n' % (reference, seq_id, sequence))
 
     return result
 
 
-def _iter_samples(dirfmt):
+def _iter_references(dirfmt):
     for path, sam in sorted(dirfmt.sams.iter_views(SAMFormat)):
         yield path.stem, str(sam)
 

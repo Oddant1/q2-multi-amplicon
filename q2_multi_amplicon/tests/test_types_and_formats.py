@@ -17,6 +17,7 @@ from q2_multi_amplicon._types_and_formats import (
 
 HEADER = '@HD\tVN:1.0\tSO:unsorted\n@SQ\tSN:ref1\tLN:200\n'
 RECORD = 'read1\t0\tref1\t1\t42\t20S120M\t*\t0\t0\tACGT\tIIII\n'
+REF2_RECORD = RECORD.replace('\tref1\t', '\tref2\t')
 
 
 class SAMFormatTests(TestPluginBase):
@@ -31,8 +32,6 @@ class SAMFormatTests(TestPluginBase):
         self._format(HEADER + RECORD).validate()
 
     def test_headers_only_is_valid(self):
-        # bowtie2 writes a header-only SAM for a sample with no alignments,
-        # which happens routinely under --no-unal.
         self._format(HEADER).validate()
 
     def test_optional_tags_are_allowed(self):
@@ -71,25 +70,51 @@ class SAMFormatTests(TestPluginBase):
 class SAMDirFmtTests(TestPluginBase):
     package = 'q2_multi_amplicon.tests'
 
-    def test_collects_sam_files(self):
+    def _dirfmt(self, sams):
         root = Path(self.temp_dir.name) / 'alignments'
         root.mkdir()
-        for sample_id in ('sample1', 'sample2'):
-            (root / ('%s.sam' % sample_id)).write_text(HEADER + RECORD)
+        for reference, records in sams.items():
+            (root / ('%s.sam' % reference)).write_text(
+                HEADER + ''.join(records))
+        return SAMDirFmt(str(root), mode='r')
 
-        dirfmt = SAMDirFmt(str(root), mode='r')
+    def test_collects_sam_files(self):
+        dirfmt = self._dirfmt({'ref1': [RECORD], 'ref2': [REF2_RECORD]})
         dirfmt.validate()
 
         self.assertEqual(
             sorted(path.stem for path, _ in dirfmt.sams.iter_views(SAMFormat)),
-            ['sample1', 'sample2'])
+            ['ref1', 'ref2'])
 
-    def test_path_maker_names_file_after_sample(self):
+    def test_no_files_is_valid(self):
+        # A sample none of whose reads aligned has no alignments to hold.
+        self._dirfmt({}).validate()
+
+    def test_record_aligned_to_another_reference(self):
+        dirfmt = self._dirfmt({'ref1': [RECORD, REF2_RECORD]})
+
+        with self.assertRaisesRegex(
+                ValidationError,
+                "record 2 of ref1.sam is aligned to 'ref2'.*only hold "
+                "alignments to 'ref1'"):
+            dirfmt.validate()
+
+    def test_min_validation_checks_first_records_only(self):
+        # The 11th record is aligned elsewhere, so 'min' validation passes
+        # over it while 'max' validation does not.
+        dirfmt = self._dirfmt({'ref1': [RECORD] * 10 + [REF2_RECORD]})
+
+        dirfmt.validate(level='min')
+
+        with self.assertRaisesRegex(ValidationError, 'record 11 of ref1.sam'):
+            dirfmt.validate(level='max')
+
+    def test_path_maker_names_file_after_reference(self):
         dirfmt = SAMDirFmt()
 
-        observed = dirfmt.sams.path_maker(sample_id='sample1')
+        observed = dirfmt.sams.path_maker(reference='ref1')
 
-        self.assertEqual(observed.name, 'sample1.sam')
+        self.assertEqual(observed.name, 'ref1.sam')
 
 
 class SAMOutputTests(TestPluginBase):

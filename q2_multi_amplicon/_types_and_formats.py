@@ -39,9 +39,8 @@ class SAMFormat(model.TextFileFormat):
     tab-separated line of at least 11 fields, of which FLAG, POS, MAPQ,
     PNEXT and TLEN must be integers.
 
-    A file containing only headers is valid. bowtie2 writes one when a
-    sample has no alignments to report, which happens routinely when it is
-    run with ``--no-unal``.
+    A file containing only headers is valid, since a SAM file need not
+    report any alignments.
 
     """
 
@@ -81,25 +80,48 @@ class SAMFormat(model.TextFileFormat):
 
 
 class SAMDirFmt(model.DirectoryFormat):
-    """One SAM file per sample, named after the sample it describes."""
+    """The alignments of one sample, as one SAM file per reference sequence.
 
-    sams = model.FileCollection(r'.+\.sam', format=SAMFormat)
+    Each file is named after the reference its records are aligned to, and
+    may only hold records aligned to that reference. A sample with no
+    alignments at all has no files.
+
+    """
+
+    sams = model.FileCollection(r'.+\.sam', format=SAMFormat, optional=True)
 
     @sams.set_path_maker
-    def sams_path_maker(self, sample_id):
-        return '%s.sam' % sample_id
+    def sams_path_maker(self, reference):
+        return '%s.sam' % reference
+
+    def _validate_(self, level):
+        max_records = {'min': 10, 'max': None}[level]
+
+        for path, sam in self.sams.iter_views(SAMFormat):
+            reference = path.stem
+            for records_seen, fields in enumerate(
+                    _iter_records(str(sam)), start=1):
+                if fields[2] != reference:
+                    raise ValidationError(
+                        'Alignment record %d of %s is aligned to %r, but '
+                        'that file may only hold alignments to %r.'
+                        % (records_seen, path.name, fields[2], reference))
+
+                if max_records is not None and records_seen >= max_records:
+                    break
+
+
+def _iter_records(sam_path):
+    """Yield the fields of each alignment record in a SAM file."""
+    with open(sam_path) as fh:
+        for line in fh:
+            line = line.rstrip('\n')
+            if line and not line.startswith('@'):
+                yield line.split('\t')
 
 
 def _iter_primary_records(sam_path):
     """Yield the fields of each primary alignment record in a SAM file."""
-    with open(sam_path) as fh:
-        for line in fh:
-            line = line.rstrip('\n')
-            if not line or line.startswith('@'):
-                continue
-
-            fields = line.split('\t')
-            if int(fields[1]) & _SKIP_FLAGS:
-                continue
-
+    for fields in _iter_records(sam_path):
+        if not int(fields[1]) & _SKIP_FLAGS:
             yield fields

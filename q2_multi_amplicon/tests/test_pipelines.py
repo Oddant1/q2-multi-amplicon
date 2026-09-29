@@ -6,7 +6,6 @@
 # The full license is in the file LICENSE, distributed with this software.
 # ----------------------------------------------------------------------------
 
-import collections
 import gzip
 
 import pandas as pd
@@ -53,15 +52,22 @@ class MultiAmpliconAnalysisTests(TestPluginBase):
             self.get_data_path('paired-end-sequences.qza'))
 
     def _assert_expected_classifications(self, classifications):
-        self.assertEqual(classifications.type, SampleData[SAMOutput])
+        # Each sample has a SAM file per reference its reads were assigned
+        # to, so the files and their records give the sample's assignments.
+        self.assertEqual(list(classifications.keys()),
+                         ['sample1', 'sample2', 'sample3'])
 
         observed = {}
-        for path in sorted(classifications.view(SAMDirFmt).path.glob('*.sam')):
-            counts = collections.Counter()
-            for line in path.read_text().splitlines():
-                if not line.startswith('@'):
-                    counts[line.split('\t')[2]] += 1
-            observed[path.stem] = dict(counts)
+        for sample_id, alignments in classifications.items():
+            self.assertEqual(alignments.type, SampleData[SAMOutput])
+            # Checks that each file only holds alignments to its reference.
+            alignments.validate(level='max')
+
+            observed[sample_id] = {}
+            for path in alignments.view(SAMDirFmt).path.glob('*.sam'):
+                observed[sample_id][path.stem] = sum(
+                    1 for line in path.read_text().splitlines()
+                    if not line.startswith('@'))
 
         self.assertEqual(observed, EXPECTED_ASSIGNMENTS)
 

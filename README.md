@@ -190,9 +190,11 @@ The pipeline writes these outputs to `results/`:
 - `classified_sequences.qza`: the reads that went into the classification —
   trimmed, and merged if the input was paired-end. Pairs that vsearch could not
   merge are not classified and are not returned.
-- `classifications.qza`: a `SampleData[SAMOutput]` artifact with one SAM file
-  per sample, named after that sample, recording which reference sequence each
-  read was assigned to.
+- `classifications/`: a collection with one `SampleData[SAMOutput]` artifact
+  per sample (for example `classifications/sample1.qza`), recording which
+  reference sequence each of that sample's reads was assigned to. Within each
+  sample's artifact, the alignments to each reference are a separate SAM file
+  named after that reference (see [`classify-reads`](#classify-reads)).
 - `table.qza`: a `FeatureTable[Frequency]` counting those assignments. Its
   features are the IDs of the reference sequences, and each value is the
   number of a sample's reads that were assigned to that reference (see
@@ -224,11 +226,19 @@ steps:
 qiime multi-amplicon classify-reads \
   --i-sequences merged-sequences.qza \
   --i-database reference-index.qza \
-  --o-classifications classifications.qza
+  --o-classifications classifications
 ```
 
+The output is a collection keyed by sample ID, saved as a directory with one
+`SampleData[SAMOutput]` artifact per sample. Each sample's artifact holds one
+SAM file per reference sequence that its reads were assigned to, named after
+that reference, so `classifications/sample1.qza` might hold `ref1.sam` and
+`ref2.sam`. Every record in a file is an alignment to the reference the file
+is named after, and each file's header lists only that reference.
+
 Reads that did not align to any reference are left out of the output
-entirely.
+entirely. A sample none of whose reads aligned is still in the collection, as
+an artifact with no SAM files.
 
 ### `count-classifications`
 
@@ -238,7 +248,7 @@ analyses, and so on):
 
 ```shell
 qiime multi-amplicon count-classifications \
-  --i-classifications classifications.qza \
+  --i-classifications classifications \
   --o-table table.qza
 ```
 
@@ -256,7 +266,7 @@ and collapses identical reads within each reference into one feature:
 
 ```shell
 qiime multi-amplicon dereplicate-classifications \
-  --i-classifications classifications.qza \
+  --i-classifications classifications \
   --o-dereplicated-tables dereplicated-tables \
   --o-dereplicated-sequences dereplicated-sequences
 ```
@@ -344,22 +354,25 @@ action fails rather than building an index in which that name is ambiguous.
 
 ### Working with `SampleData[SAMOutput]`
 
-The SAM alignments carry the classified reads themselves, so a
-`SampleData[SAMOutput]` artifact can be viewed as either of the per-sample
-sequence types:
+Each `SampleData[SAMOutput]` artifact holds the alignments of one sample, one
+SAM file per reference. The SAM alignments carry the classified reads
+themselves, so a sample's artifact can be viewed as either of the per-sample
+sequence types, with one entry per reference — its reads grouped by the
+reference they were assigned to:
 
 ```python
 import qiime2
 from q2_types.per_sample_sequences import (
     QIIME1DemuxDirFmt, SingleLanePerSampleSingleEndFastqDirFmt)
 
-classifications = qiime2.Artifact.load('classifications.qza')
+classifications = qiime2.ResultCollection.load('classifications')
+sample1 = classifications['sample1']
 
-# SampleData[SequencesWithQuality] — per-sample FASTQ
-classifications.view(SingleLanePerSampleSingleEndFastqDirFmt)
+# SampleData[SequencesWithQuality] — one FASTQ per reference
+sample1.view(SingleLanePerSampleSingleEndFastqDirFmt)
 
-# SampleData[Sequences] — a single seqs.fna with '<sample-id>_<n>' headers
-classifications.view(QIIME1DemuxDirFmt)
+# SampleData[Sequences] — a single seqs.fna with '<reference-id>_<n>' headers
+sample1.view(QIIME1DemuxDirFmt)
 ```
 
 Both transformers use `samtools view` to keep only each read's own primary
