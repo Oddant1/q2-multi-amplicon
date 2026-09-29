@@ -362,9 +362,9 @@ classifications.view(SingleLanePerSampleSingleEndFastqDirFmt)
 classifications.view(QIIME1DemuxDirFmt)
 ```
 
-Both transformers keep only each read's own primary alignment, so a read
-appears at most once, and both undo the reverse complement that SAM stores
-for reads that aligned to the reverse strand. Viewing as
+Both transformers use `samtools view` to keep only each read's own primary
+alignment, so a read appears at most once, and to undo the reverse complement
+that SAM stores for reads that aligned to the reverse strand. Viewing as
 `SampleData[SequencesWithQuality]` requires the SAM to carry quality scores;
 bowtie2 preserves them from the input FASTQ, but a SAM whose `QUAL` field is
 `*` can only be viewed as `SampleData[Sequences]`.

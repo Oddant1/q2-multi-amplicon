@@ -109,9 +109,23 @@ class SAMToSequencesWithQualityTests(TransformerTestBase):
 
     def test_missing_quality_is_an_error(self):
         with self.assertRaisesRegex(
-                ValueError, "read 'read1' in sample 'sample1' has no "
+                ValueError, r"2 read\(s\) in sample 'sample2' have no "
                             'quality scores'):
-            self._to_fastq({'sample1': [_record('read1', 0, 'ACGTA', '*')]})
+            self._to_fastq({
+                'sample1': [_record('read1', 0, 'ACGTA', 'IIIII')],
+                'sample2': [_record('read2', 0, 'ACGTA', '*'),
+                            _record('read3', 0, 'TTTTT', 'IIIII'),
+                            _record('read4', 16, 'GGCCA', '*')],
+            })
+
+    def test_skips_records_without_a_sequence(self):
+        _, observed = self._to_fastq({
+            'sample1': [_record('read1', 0, 'ACGTA', 'IIIII'),
+                        _record('read2', 0, '*', '*')],
+        })
+
+        self.assertEqual(observed,
+                         {'sample1': [('@read1', 'ACGTA', 'IIIII')]})
 
 
 class SAMToSequencesTests(TransformerTestBase):
@@ -151,6 +165,14 @@ class SAMToSequencesTests(TransformerTestBase):
                 _record('unmapped', 4, 'TTTTT', 'IIIII'),
                 _record('secondary', 256, 'GGGGG', 'IIIII'),
             ],
+        })
+
+        self.assertEqual(observed, [('sample1_0', 'ACGTA')])
+
+    def test_skips_records_without_a_sequence(self):
+        observed = self._to_fasta({
+            'sample1': [_record('read1', 0, '*', '*'),
+                        _record('read2', 0, 'ACGTA', 'IIIII')],
         })
 
         self.assertEqual(observed, [('sample1_0', 'ACGTA')])

@@ -178,10 +178,10 @@ def _bowtie2_preset(mode, sensitivity):
 
 def _run_command(cmd, stdout=None):
     try:
-        subprocess.run(cmd, check=True, text=True,
-                       stdout=stdout if stdout is not None
-                       else subprocess.PIPE,
-                       stderr=subprocess.PIPE)
+        return subprocess.run(cmd, check=True, text=True,
+                              stdout=stdout if stdout is not None
+                              else subprocess.PIPE,
+                              stderr=subprocess.PIPE)
     except subprocess.CalledProcessError as e:
         detail = (e.stderr or '').strip() or (e.stdout or '').strip()
         raise RuntimeError(
