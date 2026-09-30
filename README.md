@@ -1,121 +1,13 @@
 # q2-multi-amplicon
 
-A [QIIME 2](https://qiime2.org) plugin [developed](https://develop.qiime2.org) by Oddant1 (oddant1@hotmail.com). 🔌
-
 ## Installation instructions
 
-**The following instructions are intended to be a starting point** and should be replaced when `q2-multi-amplicon` is ready to share with others.
-They will enable you to install the most recent *development* version of `q2-multi-amplicon`.
-Remember that *release* versions should be used for all "real" work (i.e., where you're not testing or prototyping) - if there aren't instructions for installing a release version of this plugin, it is probably not yet intended for use in practice.
-
-### Install Prerequisites
-
-[Miniconda](https://conda.io/miniconda.html) provides the `conda` environment and package manager, and is currently the only supported way to install QIIME 2.
-Follow the instructions for downloading and installing Miniconda.
-
-After installing Miniconda and opening a new terminal, make sure you're running the latest version of `conda`:
-
-```bash
-conda update conda
-```
-
-###  Install development version of `q2-multi-amplicon`
-
-Next, you need to get into the top-level `q2-multi-amplicon` directory.
-If you already have this (e.g., because you just created the plugin), this may be as simple as running `cd q2-multi-amplicon`.
-If not, you'll need the `q2-multi-amplicon` directory on your computer.
-How you do that will differ based on how the package is shared, and ideally the developer will update these instructions to be more specific (remember, these instructions are intended to be a starting point).
-For example, if it's maintained in a GitHub repository, you can achieve this by [cloning the repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository).
-Once you have the directory on your computer, change (`cd`) into it.
-
-If you're in a conda environment, deactivate it by running `conda deactivate`.
-
-
-Then, follow the install instructions below, based on your machine's architecture:
-
-<details>
-<summary><strong>🍏&nbsp;Apple Silicon (ARM)</strong></summary>
-<p>&nbsp;</p>
-
-Start by creating a new conda environment:
-
 ```shell
-CONDA_SUBDIR=osx-64 conda env create -n q2-multi-amplicon-dev --file ./environment-files/q2-multi-amplicon-qiime2-qiime2-dev.yml
-```
-
-After this completes, activate the new environment you created by running:
-
-```shell
+conda env create -n q2-multi-amplicon-dev -f ./environment-files/q2-multi-amplicon-qiime2-tiny-2026.7.yml
 conda activate q2-multi-amplicon-dev
 ```
 
-Once this new environment has been activated, update your conda config to set the subdir to osx-64:
-
-```shell
-conda config --env --set subdir osx-64
-```
-
-Finally, run:
-
-```shell
-make install
-```
-</details>
-
-<details>
-<summary><strong>🛠&nbsp;All other architectures (Apple Intel, Linux, WSL)</strong></summary>
-<p>&nbsp;</p>
-
-Start by creating a new conda environment:
-
-```shell
-conda env create -n q2-multi-amplicon-dev --file ./environment-files/q2-multi-amplicon-qiime2-qiime2-dev.yml
-```
-
-After this completes, activate the new environment you created by running:
-
-```shell
-conda activate q2-multi-amplicon-dev
-```
-
-Finally, run:
-
-```shell
-make install
-```
-</details>
-
-## Testing and using the most recent development version of `q2-multi-amplicon`
-
-After completing the install steps above, confirm that everything is working as expected by running:
-
-```shell
-make test
-```
-
-You should get a report that tests were run, and you should see that all tests passed and none failed.
-It's usually ok if some warnings are reported.
-
-If all of the tests pass, you're ready to use the plugin.
-Start by making QIIME 2's command line interface aware of `q2-multi-amplicon` by running:
-
-```shell
-qiime dev refresh-cache
-```
-
-You should then see the plugin in the list of available plugins if you run:
-
-```shell
-qiime info
-```
-
-You should be able to review the help text by running:
-
-```shell
-qiime multi-amplicon --help
-```
-
-Have fun! 😎
+ <!-- I asked Claude to wtite a README and it did this... not sure how I feel about it's very long, but it seems potentially useful -->
 
 ## Usage
 

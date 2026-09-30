@@ -1,6 +1,0 @@
-channels:
-- https://packages.qiime2.org/qiime2/latest/qiime2/passed
-- conda-forge
-- bioconda
-dependencies:
-  - rachis-qiime2

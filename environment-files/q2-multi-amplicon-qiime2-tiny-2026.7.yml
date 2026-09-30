@@ -1,0 +1,9 @@
+channels:
+- https://packages.qiime2.org/qiime2/2026.7/tiny/released
+- conda-forge
+- bioconda
+dependencies:
+  - rachis-tiny
+  - pip
+  - pip:
+    - q2-real-allele@git+https://github.com/Oddant1/q2-real-allele.git
