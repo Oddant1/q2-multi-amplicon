@@ -6,4 +6,5 @@ dependencies:
   - rachis-tiny
   - pip
   - pip:
+    - q2-multi-amplicon@git+https://github.com/Oddant1/q2-multi-amplicon.git
     - q2-real-allele@git+https://github.com/Oddant1/q2-real-allele.git
