@@ -6,5 +6,6 @@ dependencies:
   - rachis-qiime2
   - pip
   - pip:
+    - q2-cutadapt@git+https://github.com/qiime2/q2-cutadapt.git@ac415aef52317a0be1315b1a7a3e29f678f0b44f
     - q2-multi-amplicon@git+https://github.com/Oddant1/q2-multi-amplicon.git
     - q2-real-allele@git+https://github.com/Oddant1/q2-real-allele.git
